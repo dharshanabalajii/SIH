@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Live Safety Dashboard</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <!-- Leaflet -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+
+  <!-- Icons -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css">
+
+  <style>
+    /* Reset & Base */
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    }
+
+    body {
+      display: flex;
+      height: 100vh;
+      overflow: hidden;
+      background: linear-gradient(to right, #f8f9fa, #e6ecf0);
+    }
+
+    /* Map styling */
+    #map {
+      width: 70%;
+      height: 100%;
+      z-index: 1;
+    }
+
+    /* Dashboard container */
+    #dashboard {
+      width: 30%;
+      padding: 30px;
+      display: flex;
+      flex-direction: column;
+      justify-content: flex-start;
+      gap: 20px;
+      background: rgba(255, 255, 255, 0.6);
+      backdrop-filter: blur(10px);
+      box-shadow: -5px 0 20px rgba(0, 0, 0, 0.15);
+      z-index: 2;
+      overflow-y: auto;
+    }
+
+    /* Dashboard header */
+    #dashboard h2 {
+      font-size: 26px;
+      font-weight: bold;
+      color: #333;
+      text-align: center;
+      margin-bottom: 20px;
+    }
+
+    /* Cards */
+    .card {
+      flex: 1;
+      background: rgba(255, 255, 255, 0.75);
+      border-radius: 16px;
+      padding: 25px;
+      text-align: center;
+      box-shadow: 0 8px 20px rgba(0, 0, 0, 0.1);
+      transition: transform 0.3s ease, box-shadow 0.3s ease;
+    }
+
+    .card:hover {
+      transform: translateY(-4px);
+      box-shadow: 0 12px 30px rgba(0, 0, 0, 0.15);
+    }
+
+    /* Card titles */
+    .card h3 {
+      font-size: 20px;
+      margin-bottom: 10px;
+      color: #555;
+    }
+
+    /* Counts */
+    .count {
+      font-size: 36px;
+      font-weight: bold;
+      transition: all 0.4s ease;
+    }
+
+    .safe {
+      color: #2ecc71; /* Green */
+    }
+
+    .danger {
+      color: #e74c3c; /* Red */
+    }
+
+    .total {
+      color: #34495e; /* Dark Gray */
+    }
+
+    /* Icons */
+    .icon {
+      font-size: 30px;
+      margin-bottom: 10px;
+    }
+
+    .safe-icon {
+      color: #27ae60;
+    }
+
+    .danger-icon {
+      color: #c0392b;
+    }
+
+    .total-icon {
+      color: #2c3e50;
+    }
+
+    /* Scroll styling */
+    #dashboard::-webkit-scrollbar {
+      width: 8px;
+    }
+    #dashboard::-webkit-scrollbar-thumb {
+      background: rgba(0,0,0,0.2);
+      border-radius: 8px;
+    }
+
+    /* Responsive design */
+    @media (max-width: 900px) {
+      body {
+        flex-direction: column;
+      }
+      #map {
+        width: 100%;
+        height: 60%;
+      }
+      #dashboard {
+        width: 100%;
+        height: 40%;
+        flex-direction: row;
+        overflow-x: auto;
+        gap: 10px;
+      }
+      .card {
+        min-width: 150px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+
+  <div id="dashboard">
+    <h2>Live Safety Dashboard</h2>
+
+    <div class="card">
+      <div class="icon safe-icon"><i class="fas fa-user-shield"></i></div>
+      <h3>Safe Zone</h3>
+      <p id="safe-count" class="count safe">0</p>
+    </div>
+
+    <div class="card">
+      <div class="icon danger-icon"><i class="fas fa-exclamation-triangle"></i></div>
+      <h3>Danger Zone</h3>
+      <p id="danger-count" class="count danger">0</p>
+    </div>
+
+    <div class="card">
+      <div class="icon total-icon"><i class="fas fa-users"></i></div>
+      <h3>Total Live Users</h3>
+      <p id="total-count" class="count total">0</p>
+    </div>
+  </div>
+
+  <!-- Scripts -->
+  <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+  <script src="https://cdn.socket.io/4.6.1/socket.io.min.js"></script>
+  <script src="https://unpkg.com/leaflet.heat/dist/leaflet-heat.js"></script>
+
+  <script>
+    // Initialize map
+    const map = L.map('map').setView([26.1, 92.0], 7);
+
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '&copy; OpenStreetMap contributors',
+      maxZoom: 18,
+    }).addTo(map);
+
+    // Load static heatmap
+    fetch('/api/heatpoints')
+      .then(res => res.json())
+      .then(points => {
+        const heatData = points.map(p => [p.lat, p.lon, p.intensity]);
+        L.heatLayer(heatData, {
+          radius: 45,
+          blur: 30,
+          maxZoom: 10,
+          max: 2.0,
+          gradient: {
+            0.4: 'blue',
+            0.65: 'lime',
+            1: 'red'
+          }
+        }).addTo(map);
+      });
+
+    // Animated number update
+    function animateCount(element, newValue) {
+      const currentValue = parseInt(element.innerText) || 0;
+      const increment = (newValue - currentValue) / 10;
+      let counter = 0;
+
+      const interval = setInterval(() => {
+        counter++;
+        const value = Math.round(currentValue + increment * counter);
+        element.innerText = value;
+        if (counter >= 10) {
+          element.innerText = newValue;
+          clearInterval(interval);
+        }
+      }, 30);
+    }
+
+    // Dashboard updater
+    function updateDashboard() {
+      fetch('/api/dashboard')
+        .then(res => res.json())
+        .then(data => {
+          animateCount(document.getElementById('safe-count'), data.safe);
+          animateCount(document.getElementById('danger-count'), data.danger);
+          animateCount(document.getElementById('total-count'), data.total);
+        });
+    }
+    setInterval(updateDashboard, 3000);
+    updateDashboard();
+
+    // Function to get user icon based on danger zone
+    function getUserIcon(isDangerZone) {
+      return L.icon({
+        iconUrl: isDangerZone
+          ? 'https://cdn-icons-png.flaticon.com/512/484/484662.png' // Red icon
+          : 'https://cdn-icons-png.flaticon.com/512/190/190411.png', // Green icon
+        iconSize: [30, 30],
+        iconAnchor: [15, 15],
+      });
+    }
+
+    // WebSocket for real-time markers
+    const socket = io();
+    const peopleMarkers = {};
+
+    socket.on('location_broadcast', data => {
+      const { user_id, lat, lon, isDangerZone } = data; // Server must send isDangerZone
+
+      if (peopleMarkers[user_id]) {
+        peopleMarkers[user_id].setLatLng([lat, lon]);
+        peopleMarkers[user_id].setIcon(getUserIcon(isDangerZone)); // Update icon dynamically
+      } else {
+        peopleMarkers[user_id] = L.marker([lat, lon], { icon: getUserIcon(isDangerZone) }).addTo(map);
+      }
+    });
+  </script>
+</body>
+</html>
